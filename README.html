@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>星际沙盒 - 重力感应物理模拟</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            width: 90%;
+            max-width: 400px;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .gravity-btn {
+            transition: all 0.2s;
+        }
+        .gravity-btn.active {
+            background: #fff;
+            color: #000;
+        }
+        #permission-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="permission-overlay">
+        <h1 class="text-3xl font-bold mb-4">星际沙盒</h1>
+        <p class="mb-8 opacity-80">点击下方按钮授权重力感应和震动反馈</p>
+        <button id="start-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-full font-semibold transition-all shadow-lg">
+            开启探索之旅
+        </button>
+    </div>
+
+    <div class="controls">
+        <div class="glass-card text-white">
+            <div class="flex justify-between items-center mb-4">
+                <span class="text-sm font-medium opacity-70">选择星球重力</span>
+                <button id="clear-btn" class="text-xs bg-red-500/20 hover:bg-red-500/40 px-3 py-1 rounded-md border border-red-500/30">清除画布</button>
+            </div>
+            <div class="grid grid-cols-4 gap-2">
+                <button class="gravity-btn text-xs py-2 rounded-lg bg-white/10 active" data-gravity="9.8" data-planet="地球">地球</button>
+                <button class="gravity-btn text-xs py-2 rounded-lg bg-white/10" data-gravity="1.6" data-planet="月球">月球</button>
+                <button class="gravity-btn text-xs py-2 rounded-lg bg-white/10" data-gravity="3.7" data-planet="火星">火星</button>
+                <button class="gravity-btn text-xs py-2 rounded-lg bg-white/10" data-gravity="24.8" data-planet="木星">木星</button>
+            </div>
+            <div class="mt-3 text-[10px] opacity-40 text-center">
+                倾斜手机控制流向 • 点击屏幕产生沙子
+            </div>
+        </div>
+    </div>
+
+    <canvas id="sandCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('sandCanvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const startBtn = document.getElementById('start-btn');
+        const overlay = document.getElementById('permission-overlay');
+        const clearBtn = document.getElementById('clear-btn');
+        const gravityBtns = document.querySelectorAll('.gravity-btn');
+
+        // 模拟参数
+        const cellSize = 4; // 像素大小
+        let width, height, rows, cols;
+        let grid = [];
+        let gravityX = 0;
+        let gravityY = 1; // 初始向下
+        let currentGravityMult = 1; // 重力强度系数
+        let isTouching = false;
+        let touchPos = { x: 0, y: 0 };
+        let lastVibrationTime = 0;
+
+        const PLANET_GRAVITY = {
+            "地球": 9.8,
+            "月球": 1.6,
+            "火星": 3.7,
+            "木星": 24.8
+        };
+
+        function init() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            cols = Math.floor(width / cellSize);
+            rows = Math.floor(height / cellSize);
+            
+            // 初始化格点 (0: 空, >0: 沙子类型/颜色)
+            grid = new Array(cols).fill(0).map(() => new Array(rows).fill(0));
+            
+            // 默认地球重力系数
+            setGravityParams(9.8);
+        }
+
+        function setGravityParams(g) {
+            // 将真实重力加速度映射到模拟步长
+            // 地球 9.8 设为标准 1.0
+            currentGravityMult = g / 9.8;
+        }
+
+        // 核心模拟逻辑：Falling Sand 算法
+        function update() {
+            // 复制一份当前状态用于计算（避免同一帧重复移动）
+            let nextGrid = grid.map(col => [...col]);
+
+            // 确定主要移动方向
+            const moveX = gravityX > 0.2 ? 1 : (gravityX < -0.2 ? -1 : 0);
+            const moveY = gravityY > 0.2 ? 1 : (gravityY < -0.2 ? -1 : 0);
+
+            // 遍历所有格子
+            // 如果重力向下，我们从底部向上遍历，反之亦然，以防止“叠层”错误
+            const colStart = moveX > 0 ? cols - 1 : 0;
+            const colEnd = moveX > 0 ? -1 : cols;
+            const colStep = moveX > 0 ? -1 : 1;
+
+            const rowStart = moveY > 0 ? rows - 1 : 0;
+            const rowEnd = moveY > 0 ? -1 : rows;
+            const rowStep = moveY > 0 ? -1 : 1;
+
+            let movedAny = false;
+
+            for (let i = 0; i < cols; i++) {
+                for (let j = rows - 1; j >= 0; j--) {
+                    let state = grid[i][j];
+                    if (state > 0) {
+                        // 随机性：根据重力倍率决定是否在这一帧移动
+                        if (Math.random() > currentGravityMult * 0.8 && currentGravityMult < 2) continue;
+
+                        // 尝试向下/重力方向移动
+                        let di = moveX;
+                        let dj = moveY;
+
+                        // 基本下落逻辑
+                        let ni = i + di;
+                        let nj = j + dj;
+
+                        // 边界检查
+                        if (ni < 0 || ni >= cols) ni = i;
+                        if (nj < 0 || nj >= rows) nj = j;
+
+                        if (grid[ni][nj] === 0) {
+                            nextGrid[i][j] = 0;
+                            nextGrid[ni][nj] = state;
+                            movedAny = true;
+                        } else {
+                            // 侧向侧滑（沙堆堆积效果）
+                            // 尝试向侧下方滑动
+                            let sides = [Math.random() > 0.5 ? 1 : -1];
+                            sides.push(-sides[0]);
+
+                            let slid = false;
+                            for(let s of sides) {
+                                let si = i + s;
+                                let sj = j + dj;
+                                if (si >= 0 && si < cols && sj >= 0 && sj < rows && grid[si][sj] === 0) {
+                                    nextGrid[i][j] = 0;
+                                    nextGrid[si][sj] = state;
+                                    slid = true;
+                                    movedAny = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            grid = nextGrid;
+
+            // 震动反馈：如果发生大规模位移且已经冷却
+            if (movedAny && Date.now() - lastVibrationTime > 150 && Math.random() > 0.95) {
+                if (navigator.vibrate) {
+                    navigator.vibrate(5); // 极短的震动模拟触感
+                    lastVibrationTime = Date.now();
+                }
+            }
+        }
+
+        function draw() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
+                    if (grid[i][j] > 0) {
+                        ctx.fillStyle = `hsl(${grid[i][j]}, 70%, 60%)`;
+                        ctx.fillRect(i * cellSize, j * cellSize, cellSize, cellSize);
+                    }
+                }
+            }
+        }
+
+        function loop() {
+            if (isTouching) {
+                // 产生沙子
+                for(let k=0; k<5; k++) {
+                    let rx = Math.floor(touchPos.x / cellSize) + Math.floor(Math.random()*5-2);
+                    let ry = Math.floor(touchPos.y / cellSize) + Math.floor(Math.random()*5-2);
+                    if (rx >= 0 && rx < cols && ry >= 0 && ry < rows) {
+                        if (grid[rx][ry] === 0) {
+                            grid[rx][ry] = (Date.now() / 20) % 360; // 随时间变化的颜色
+                        }
+                    }
+                }
+            }
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // 交互处理
+        canvas.addEventListener('mousedown', (e) => { isTouching = true; touchPos = { x: e.clientX, y: e.clientY }; });
+        canvas.addEventListener('mousemove', (e) => { touchPos = { x: e.clientX, y: e.clientY }; });
+        window.addEventListener('mouseup', () => { isTouching = false; });
+
+        canvas.addEventListener('touchstart', (e) => { 
+            isTouching = true; 
+            touchPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            e.preventDefault();
+        }, {passive: false});
+        canvas.addEventListener('touchmove', (e) => { 
+            touchPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            e.preventDefault();
+        }, {passive: false});
+        window.addEventListener('touchend', () => { isTouching = false; });
+
+        // 重力感应处理
+        function handleOrientation(event) {
+            // beta: x轴旋转 (前/后) -> 对应屏幕 Y
+            // gamma: y轴旋转 (左/右) -> 对应屏幕 X
+            let x = event.gamma / 30; // 归一化
+            let y = event.beta / 30;
+
+            // 限制范围并平滑处理
+            gravityX = Math.max(-1, Math.min(1, x));
+            gravityY = Math.max(-1, Math.min(1, y));
+        }
+
+        // 授权与启动
+        startBtn.onclick = async () => {
+            // iOS 设备需要显式请求权限
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                    }
+                } catch (e) {
+                    console.error("Permission denied", e);
+                }
+            } else {
+                // 其他设备直接监听
+                window.addEventListener('deviceorientation', handleOrientation);
+            }
+            
+            // 激活震动授权
+            if (navigator.vibrate) navigator.vibrate(20);
+            
+            overlay.style.display = 'none';
+            loop();
+        };
+
+        // 星球切换
+        gravityBtns.forEach(btn => {
+            btn.onclick = () => {
+                gravityBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                setGravityParams(parseFloat(btn.dataset.gravity));
+                if (navigator.vibrate) navigator.vibrate([10, 50, 10]);
+            };
+        });
+
+        clearBtn.onclick = () => {
+            grid = new Array(cols).fill(0).map(() => new Array(rows).fill(0));
+        };
+
+        window.onresize = init;
+        init();
+
+    </script>
+</body>
+</html>
+
