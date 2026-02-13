@@ -2,240 +2,60 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>星际沙盒 Extreme - 真实加速度传感器</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>震动测试</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; touch-action: none; font-family: sans-serif; }
-        canvas { display: block; }
-        .ui-panel { position: fixed; inset: 0; pointer-events: none; z-index: 10; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; }
-        .interactive { pointer-events: auto; }
-        .glass { background: rgba(30, 30, 35, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); color: white; }
-        #overlay { position: fixed; inset: 0; background: #000; z-index: 100; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; text-align: center; }
-        .active-planet { border-color: #6366f1; background: rgba(99, 102, 241, 0.2); }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            font-family: sans-serif;
+            background-color: #f0f2f5;
+        }
+        button {
+            padding: 20px 40px;
+            font-size: 1.2rem;
+            color: white;
+            background-color: #007AFF;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        button:active {
+            background-color: #0056b3;
+            transform: scale(0.98);
+        }
+        p {
+            margin-top: 20px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
 
-    <div id="overlay">
-        <div class="mb-8">
-            <div class="text-6xl mb-4 animate-bounce">☄️</div>
-            <h1 class="text-3xl font-bold tracking-wider">物理引擎已就绪</h1>
-            <p class="text-gray-400 mt-2 px-6">将模拟真实的加速度计反应<br>与碰撞震动反馈</p>
-        </div>
-        <button id="start-btn" class="interactive bg-white text-black px-12 py-4 rounded-full font-black text-lg hover:scale-105 transition-transform">
-            进入模拟
-        </button>
-    </div>
-
-    <div class="ui-panel">
-        <div class="flex justify-between items-center">
-            <div class="glass px-4 py-2 rounded-xl">
-                <div id="planet-display" class="font-bold">地球模式</div>
-                <div id="motion-debug" class="text-[10px] font-mono opacity-50">加速度: 0.00</div>
-            </div>
-            <button id="reset-btn" class="interactive glass w-12 h-12 rounded-full flex items-center justify-center font-bold">↺</button>
-        </div>
-
-        <div class="interactive glass p-4 rounded-3xl">
-            <div class="flex gap-2">
-                <button class="planet-opt flex-1 py-3 rounded-xl text-xs" data-g="1.62" data-name="月球">月球</button>
-                <button class="planet-opt flex-1 py-3 rounded-xl text-xs active-planet" data-g="9.81" data-name="地球">地球</button>
-                <button class="planet-opt flex-1 py-3 rounded-xl text-xs" data-g="3.72" data-name="火星">火星</button>
-                <button class="planet-opt flex-1 py-3 rounded-xl text-xs" data-g="24.79" data-name="木星">木星</button>
-            </div>
-        </div>
-    </div>
-
-    <canvas id="sandbox"></canvas>
+    <button onclick="vibrate()">按下震动</button>
+    <p id="status">点击按钮感受震动（仅限移动端）</p>
 
     <script>
-        const canvas = document.getElementById('sandbox');
-        const ctx = canvas.getContext('2d');
-        const startBtn = document.getElementById('start-btn');
-        const overlay = document.getElementById('overlay');
-        const motionDebug = document.getElementById('motion-debug');
-
-        // 核心物理引擎变量
-        let particles = [];
-        const MAX_PARTICLES = 1200;
-        let baseGravity = 9.81; 
-        let gravityVec = { x: 0, y: 0 };
-        let userAccel = { x: 0, y: 0, z: 0 };
-        
-        // 物理配置
-        const FRICTION = 0.95; 
-        const BOUNCE = 0.4;
-        const RADIUS = 2.5;
-
-        class Sand {
-            constructor(x, y, hue) {
-                this.x = x;
-                this.y = y;
-                this.vx = 0;
-                this.vy = 0;
-                this.hue = hue;
-            }
-
-            update() {
-                // 1. 结合重力向量和用户动作加速度
-                // userAccel.x 是手机左右晃动，userAccel.y 是前后晃动
-                // 注意：传感器坐标系与屏幕坐标系的转换
-                const ax = (gravityVec.x * baseGravity) - (userAccel.x * 2.5);
-                const ay = (gravityVec.y * baseGravity) + (userAccel.y * 2.5);
-
-                this.vx += ax * 0.016; 
-                this.vy += ay * 0.016;
-
-                this.vx *= FRICTION;
-                this.vy *= FRICTION;
-
-                this.x += this.vx;
-                this.y += this.vy;
-
-                let impact = 0;
-
-                // 2. 边界碰撞与反弹
-                if (this.x < RADIUS) {
-                    impact = Math.abs(this.vx);
-                    this.x = RADIUS;
-                    this.vx *= -BOUNCE;
-                } else if (this.x > canvas.width - RADIUS) {
-                    impact = Math.abs(this.vx);
-                    this.x = canvas.width - RADIUS;
-                    this.vx *= -BOUNCE;
-                }
-
-                if (this.y < RADIUS) {
-                    impact = Math.abs(this.vy);
-                    this.y = RADIUS;
-                    this.vy *= -BOUNCE;
-                } else if (this.y > canvas.height - RADIUS) {
-                    impact = Math.abs(this.vy);
-                    this.y = canvas.height - RADIUS;
-                    this.vy *= -BOUNCE;
-                }
-
-                return impact;
-            }
-
-            draw() {
-                ctx.fillStyle = `hsl(${this.hue}, 80%, 60%)`;
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, RADIUS, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        function initCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-        }
-
-        function handleMotion(event) {
-            // 获取线性加速度（不含重力）
-            if (event.acceleration) {
-                userAccel.x = event.acceleration.x || 0;
-                userAccel.y = event.acceleration.y || 0;
-                userAccel.z = event.acceleration.z || 0;
+        function vibrate() {
+            // 检查浏览器是否支持 Vibration API
+            if ("vibrate" in navigator) {
+                // 震动 200 毫秒
+                navigator.vibrate(200);
+                document.getElementById('status').innerText = "正在震动...";
                 
-                const totalMotion = Math.abs(userAccel.x) + Math.abs(userAccel.y);
-                motionDebug.innerText = `加速度: ${totalMotion.toFixed(2)}`;
+                setTimeout(() => {
+                    document.getElementById('status').innerText = "震动完成";
+                }, 200);
+            } else {
+                alert("抱歉，您的浏览器不支持震动功能。");
             }
         }
-
-        function handleOrientation(event) {
-            // 将倾斜转换为重力方向向量 (normalized)
-            const beta = event.beta * Math.PI / 180;   // -180 to 180
-            const gamma = event.gamma * Math.PI / 180; // -90 to 90
-
-            gravityVec.x = Math.sin(gamma);
-            gravityVec.y = Math.sin(beta);
-        }
-
-        let lastVibrate = 0;
-        function render() {
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            let totalImpact = 0;
-            for (let p of particles) {
-                totalImpact += p.update();
-                p.draw();
-            }
-
-            // 震动反馈：根据当前所有粒子的总冲击力判断
-            if (totalImpact > 100 && Date.now() - lastVibrate > 80) {
-                const duration = Math.min(30, totalImpact / 20);
-                if (navigator.vibrate) navigator.vibrate(duration);
-                lastVibrate = Date.now();
-            }
-
-            requestAnimationFrame(render);
-        }
-
-        // 交互逻辑
-        startBtn.onclick = async () => {
-            try {
-                // iOS 授权
-                if (typeof DeviceMotionEvent.requestPermission === 'function') {
-                    await DeviceOrientationEvent.requestPermission();
-                    await DeviceMotionEvent.requestPermission();
-                }
-            } catch (e) {}
-
-            window.addEventListener('devicemotion', handleMotion);
-            window.addEventListener('deviceorientation', handleOrientation);
-            
-            overlay.style.display = 'none';
-            if (navigator.vibrate) navigator.vibrate(50);
-            render();
-        };
-
-        // 产生沙子
-        const createSand = (x, y) => {
-            if (particles.length < MAX_PARTICLES) {
-                for(let i=0; i<5; i++) {
-                    const hue = (Date.now() / 10 + particles.length) % 360;
-                    particles.push(new Sand(
-                        x + (Math.random()-0.5)*30, 
-                        y + (Math.random()-0.5)*30, 
-                        hue
-                    ));
-                }
-            }
-        };
-
-        canvas.addEventListener('touchstart', (e) => {
-            const t = e.touches[0];
-            createSand(t.clientX, t.clientY);
-        });
-
-        canvas.addEventListener('touchmove', (e) => {
-            const t = e.touches[0];
-            createSand(t.clientX, t.clientY);
-        });
-
-        // UI 事件
-        document.querySelectorAll('.planet-opt').forEach(btn => {
-            btn.onclick = () => {
-                document.querySelectorAll('.planet-opt').forEach(b => b.classList.remove('active-planet'));
-                btn.classList.add('active-planet');
-                baseGravity = parseFloat(btn.dataset.g);
-                document.getElementById('planet-display').innerText = btn.dataset.name + '模式';
-                if (navigator.vibrate) navigator.vibrate(20);
-            };
-        });
-
-        document.getElementById('reset-btn').onclick = () => {
-            particles = [];
-            if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
-        };
-
-        window.onresize = initCanvas;
-        initCanvas();
-
     </script>
+
 </body>
 </html>
-
